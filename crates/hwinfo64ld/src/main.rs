@@ -144,6 +144,14 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn handle_client(
     stream: UnixStream,
     engine: Arc<CoreEngine>,
@@ -153,7 +161,7 @@ async fn handle_client(
     let (read_half, write_half) = stream.into_split();
     let writer = Arc::new(Mutex::new(write_half));
     let mut reader = BufReader::new(read_half);
-    let mut sub_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut sub_task: Option<AbortOnDrop> = None;
 
     loop {
         let read_fut = read_line_bounded_async(&mut reader, MAX_RPC_LINE_BYTES);
@@ -243,13 +251,11 @@ async fn handle_client(
                     .get("ids")
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-                if let Some(prev) = sub_task.take() {
-                    prev.abort();
-                }
+                sub_task.take();
 
                 let eng_sub = Arc::clone(&engine);
                 let writer_sub = Arc::clone(&writer);
-                sub_task = Some(tokio::spawn(async move {
+                sub_task = Some(AbortOnDrop(tokio::spawn(async move {
                     let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms));
                     loop {
                         ticker.tick().await;
@@ -266,7 +272,7 @@ async fn handle_client(
                             break;
                         }
                     }
-                }));
+                })));
 
                 JsonRpcResponse::ok(
                     req.id,
@@ -279,9 +285,7 @@ async fn handle_client(
         write_json_line(&writer, &resp).await?;
     }
 
-    if let Some(task) = sub_task {
-        task.abort();
-    }
+    drop(sub_task);
     Ok(())
 }
 
