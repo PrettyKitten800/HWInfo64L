@@ -4,9 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
-use hwinfo64l_core::{CoreEngine, SupervisorConfig};
+use hwinfo64l_core::{
+    discover_plugin_executables, CoreEngine, NdjsonPluginProbe, SupervisorConfig,
+};
 use hwinfo64l_protocol::{
-    JsonRpcRequest, JsonRpcResponse, ListSensorsResponse, DEFAULT_SOCKET_PATH,
+    InventoryNode, JsonRpcRequest, JsonRpcResponse, ListSensorsResponse, DEFAULT_SOCKET_PATH,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -30,11 +32,16 @@ struct Args {
     /// Path to hwinfo64ld Unix domain socket.
     #[arg(long, env = "HWINFO64L_SOCKET", default_value = DEFAULT_SOCKET_PATH)]
     socket: PathBuf,
+
+    /// Optional directory of unprivileged NDJSON plugins to merge alongside hwinfo64ld.
+    #[arg(long, env = "HWINFO64L_PLUGIN_DIR")]
+    plugin_dir: Option<PathBuf>,
 }
 
 struct AppState {
     socket: PathBuf,
     fallback: Arc<tokio::sync::Mutex<Option<Arc<CoreEngine>>>>,
+    plugins: Arc<CoreEngine>,
 }
 
 impl AppState {
@@ -74,17 +81,35 @@ impl AppState {
     }
 
     async fn query_sensors(&self) -> ListSensorsResponse {
-        if let Some(v) = self.daemon_rpc("v1.list_sensors", json!({})).await {
-            if let Ok(resp) = serde_json::from_value::<ListSensorsResponse>(v) {
-                return resp;
+        let mut resp = if let Some(v) = self.daemon_rpc("v1.list_sensors", json!({})).await {
+            serde_json::from_value::<ListSensorsResponse>(v).unwrap_or_else(|_| {
+                ListSensorsResponse {
+                    descriptors: Vec::new(),
+                    readings: Vec::new(),
+                    probes: Vec::new(),
+                }
+            })
+        } else {
+            let eng = self.get_fallback().await;
+            ListSensorsResponse {
+                descriptors: eng.descriptors(),
+                readings: eng.readings(None),
+                probes: eng.probes(),
+            }
+        };
+
+        for d in self.plugins.descriptors() {
+            if !resp.descriptors.iter().any(|x| x.id == d.id) {
+                resp.descriptors.push(d);
             }
         }
-        let eng = self.get_fallback().await;
-        ListSensorsResponse {
-            descriptors: eng.descriptors(),
-            readings: eng.readings(None),
-            probes: eng.probes(),
+        for r in self.plugins.readings(None) {
+            if !resp.readings.iter().any(|x| x.id == r.id) {
+                resp.readings.push(r);
+            }
         }
+        resp.probes.extend(self.plugins.probes());
+        resp
     }
 
     async fn query_summary_json(&self) -> String {
@@ -98,23 +123,29 @@ impl AppState {
     }
 
     async fn query_inventory_json(&self) -> String {
-        if let Some(v) = self.daemon_rpc("v1.get_inventory", json!({})).await {
-            if let Ok(s) = serde_json::to_string(&v) {
-                return s;
+        let mut nodes: Vec<InventoryNode> = if let Some(v) = self.daemon_rpc("v1.get_inventory", json!({})).await {
+            serde_json::from_value(v).unwrap_or_default()
+        } else {
+            let eng = self.get_fallback().await;
+            eng.inventory()
+        };
+        for n in self.plugins.inventory() {
+            if !nodes.iter().any(|x| x.id == n.id) {
+                nodes.push(n);
             }
         }
-        let eng = self.get_fallback().await;
-        serde_json::to_string(&eng.inventory()).unwrap_or_else(|_| "[]".into())
+        serde_json::to_string(&nodes).unwrap_or_else(|_| "[]".into())
     }
 
     async fn reset_stats(&self) -> String {
+        let plugin_resets = self.plugins.reset_stats(None);
         if let Some(v) = self.daemon_rpc("v1.reset_stats", json!({})).await {
             if let Ok(s) = serde_json::to_string(&v) {
                 return s;
             }
         }
         let eng = self.get_fallback().await;
-        let count = eng.reset_stats(None);
+        let count = eng.reset_stats(None) + plugin_resets;
         format!("{{\"reset_count\":{count}}}")
     }
 }
@@ -136,9 +167,17 @@ async fn main() {
 
 async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(args.bind).await?;
+    let plugins = CoreEngine::new(SupervisorConfig::default());
+    if let Some(ref dir) = args.plugin_dir {
+        for exec in discover_plugin_executables(dir) {
+            info!(plugin = %exec.display(), "loading web plugin");
+            plugins.register_probe(Box::new(NdjsonPluginProbe::new(exec)));
+        }
+    }
     let state = Arc::new(AppState {
         socket: args.socket,
         fallback: Arc::new(tokio::sync::Mutex::new(None)),
+        plugins,
     });
 
     info!(bind = %args.bind, "hwinfo64l-web listening (dashboard at / and Prometheus at /metrics)");

@@ -5,7 +5,7 @@ Wants=hwinfo64ld.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hwinfo64l-web --bind 0.0.0.0:8640
+ExecStart=/usr/local/bin/hwinfo64l-web --bind 0.0.0.0:8640 --plugin-dir /usr/local/share/hwinfo64l/plugins
 Restart=on-failure
 RestartSec=2s
 DynamicUser=yes
