@@ -14,11 +14,18 @@ use hwinfo64l_protocol::{
     PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
+
+/// Maximum concurrent Unix socket clients accepted by `hwinfo64ld`.
+const MAX_CONCURRENT_CLIENTS: usize = 64;
+/// Maximum bytes accepted per JSON-RPC request line (64 KiB).
+const MAX_RPC_LINE_BYTES: usize = 64 * 1024;
+/// Idle read timeout for non-subscribed connections.
+const IDLE_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Parser)]
 #[command(
@@ -93,6 +100,7 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
+    let conn_limit = Arc::new(Semaphore::new(MAX_CONCURRENT_CLIENTS));
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     loop {
@@ -100,9 +108,15 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             accept_res = listener.accept() => {
                 match accept_res {
                     Ok((stream, _addr)) => {
+                        let Ok(permit) = Arc::clone(&conn_limit).try_acquire_owned() else {
+                            warn!("max concurrent clients ({MAX_CONCURRENT_CLIENTS}) reached; dropping connection");
+                            drop(stream);
+                            continue;
+                        };
                         let eng = Arc::clone(&engine);
                         let host = hostname.clone();
                         tokio::spawn(async move {
+                            let _permit = permit;
                             if let Err(e) = handle_client(stream, eng, host, privileged).await {
                                 warn!(error = %e, "client disconnected with error");
                             }
@@ -140,14 +154,21 @@ async fn handle_client(
     let writer = Arc::new(Mutex::new(write_half));
     let mut reader = BufReader::new(read_half);
     let mut sub_task: Option<tokio::task::JoinHandle<()>> = None;
-    let mut line = String::new();
 
     loop {
-        line.clear();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
+        let read_fut = read_line_bounded_async(&mut reader, MAX_RPC_LINE_BYTES);
+        let line_opt = if sub_task.is_some() {
+            read_fut.await?
+        } else {
+            match tokio::time::timeout(IDLE_CLIENT_TIMEOUT, read_fut).await {
+                Ok(res) => res?,
+                Err(_) => break,
+            }
+        };
+
+        let Some(line) = line_opt else {
             break;
-        }
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -262,6 +283,27 @@ async fn handle_client(
         task.abort();
     }
     Ok(())
+}
+
+async fn read_line_bounded_async<R: AsyncBufReadExt + Unpin>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> std::io::Result<Option<String>> {
+    let mut buf = Vec::new();
+    let limit = (max_bytes as u64).saturating_add(1);
+    let n = reader.take(limit).read_until(b'\n', &mut buf).await?;
+    if n == 0 {
+        return Ok(None);
+    }
+    if buf.len() > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("RPC line exceeded {max_bytes} bytes"),
+        ));
+    }
+    String::from_utf8(buf)
+        .map(Some)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 fn serialize_ok<T: serde::Serialize>(id: Value, value: &T) -> JsonRpcResponse {

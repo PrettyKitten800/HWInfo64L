@@ -365,4 +365,49 @@ mod tests {
 
         engine.shutdown().await;
     }
+
+    struct HangingProbe;
+    impl Probe for HangingProbe {
+        fn id(&self) -> &str {
+            "hanging"
+        }
+        fn display_name(&self) -> &str {
+            "Hanging"
+        }
+        fn poll_tier(&self) -> PollTier {
+            PollTier::Fast
+        }
+        fn poll_interval(&self) -> Duration {
+            Duration::from_millis(10)
+        }
+        fn timeout(&self) -> Duration {
+            Duration::from_millis(40)
+        }
+        fn poll(&mut self) -> Result<ProbeOutput, ProbeError> {
+            std::thread::sleep(Duration::from_millis(250));
+            Ok(ProbeOutput::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn hanging_probe_times_out_without_blocking_healthy_probe() {
+        let engine = CoreEngine::new(SupervisorConfig {
+            circuit_breaker_threshold: 1,
+            backoff_secs: vec![10],
+            ..SupervisorConfig::default()
+        });
+        engine.register_probe(Box::new(HealthyProbe));
+        engine.register_probe(Box::new(HangingProbe));
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+
+        assert_eq!(engine.readings(None).len(), 1);
+        let hanging = engine.probes().into_iter().find(|p| p.probe_id == "hanging");
+        assert!(hanging.is_some());
+        if let Some(h) = hanging {
+            assert_eq!(h.state, ProbeState::CircuitOpen);
+        }
+
+        engine.shutdown().await;
+    }
 }

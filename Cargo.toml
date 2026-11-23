@@ -19,7 +19,7 @@ repository = "https://github.com/PrettyKitten800/HWInfo64L"
 authors = ["HWInfo64L Contributors"]
 
 [workspace.lints.rust]
-unsafe_code = "warn"
+unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

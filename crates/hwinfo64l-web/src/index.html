@@ -76,7 +76,12 @@ document.querySelectorAll('.tab').forEach(btn => {
   };
 });
 document.getElementById('filter').oninput = e => { filterText = e.target.value.trim().toLowerCase(); };
-document.getElementById('resetBtn').onclick = async () => { await fetch('/api/v1/reset', { method: 'POST' }); };
+document.getElementById('resetBtn').onclick = async () => {
+  await fetch('/api/v1/reset', {
+    method: 'POST',
+    headers: { 'X-HWInfo64L-Action': 'reset' }
+  });
+};
 
 function fmtVal(d, v) {
   if (d.kind === 'boolean_flag') return v >= 0.5 ? 'Yes' : 'No';

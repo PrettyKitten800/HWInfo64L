@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -9,6 +9,28 @@ use hwinfo64l_protocol::{
 };
 
 use crate::probe::{now_epoch_ms, Probe, ProbeError, ProbeOutput, RawSample};
+
+/// Maximum bytes accepted in a single NDJSON line from an external plugin (512 KiB).
+const MAX_PLUGIN_LINE_BYTES: usize = 512 * 1024;
+
+/// Read a single `\n`-terminated line up to `max_bytes`, protecting against OOM
+/// from a misbehaving plugin streaming unbounded bytes without newlines.
+fn read_line_bounded<R: BufRead>(reader: &mut R, max_bytes: usize) -> Result<Option<String>, ProbeError> {
+    let mut buf = Vec::new();
+    let limit = (max_bytes as u64).saturating_add(1);
+    let n = reader.take(limit).read_until(b'\n', &mut buf)?;
+    if n == 0 {
+        return Ok(None);
+    }
+    if buf.len() > max_bytes {
+        return Err(ProbeError::Transient(format!(
+            "plugin line exceeded maximum limit of {max_bytes} bytes"
+        )));
+    }
+    let text = String::from_utf8(buf)
+        .map_err(|e| ProbeError::Transient(format!("plugin emitted invalid UTF-8: {e}")))?;
+    Ok(Some(text))
+}
 
 /// Discover executable plugin binaries/scripts in a plugin directory.
 ///
@@ -107,15 +129,17 @@ impl NdjsonPluginProbe {
         writeln!(stdin, "{hello}")?;
         stdin.flush()?;
 
-        let mut line = String::new();
-        let bytes = reader.read_line(&mut line)?;
-        if bytes == 0 {
+        let Some(line) = read_line_bounded(&mut reader, MAX_PLUGIN_LINE_BYTES).inspect_err(|_| {
+            let _ = child.kill();
+            let _ = child.wait();
+        })?
+        else {
             let _ = child.kill();
             let _ = child.wait();
             return Err(ProbeError::Transient(
                 "plugin exited before sending manifest".to_string(),
             ));
-        }
+        };
 
         let msg: PluginToHost = serde_json::from_str(line.trim())
             .map_err(|e| ProbeError::Transient(format!("invalid plugin manifest JSON: {e}")))?;
@@ -207,18 +231,17 @@ impl Probe for NdjsonPluginProbe {
             return Err(ProbeError::Io(e));
         }
 
-        let mut line = String::new();
-        match running.stdout.read_line(&mut line) {
-            Ok(0) => {
+        let line = match read_line_bounded(&mut running.stdout, MAX_PLUGIN_LINE_BYTES) {
+            Ok(Some(l)) => l,
+            Ok(None) => {
                 self.tear_down();
                 return Err(ProbeError::Transient("plugin closed stdout".to_string()));
             }
-            Ok(_) => {}
             Err(e) => {
                 self.tear_down();
-                return Err(ProbeError::Io(e));
+                return Err(e);
             }
-        }
+        };
 
         let msg: PluginToHost = serde_json::from_str(line.trim())
             .map_err(|e| ProbeError::Transient(format!("invalid plugin reading JSON: {e}")))?;
@@ -250,5 +273,23 @@ impl Probe for NdjsonPluginProbe {
         }
 
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn bounded_plugin_reader_rejects_oversized_lines() {
+        let huge = vec![b'a'; 1024];
+        let mut cursor = Cursor::new(huge);
+        let res = read_line_bounded(&mut cursor, 128);
+        assert!(res.is_err());
+
+        let mut ok_cursor = Cursor::new(b"{\"type\":\"poll\"}\n".to_vec());
+        let ok = read_line_bounded(&mut ok_cursor, 128);
+        assert!(matches!(ok, Ok(Some(_))));
     }
 }

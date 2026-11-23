@@ -12,12 +12,18 @@ use crate::probe::{ProbeOutput, RawSample, SummaryPatch};
 pub struct StoreConfig {
     /// Maximum ring-buffer samples retained per sensor (default: 3600 = 1 hr @ 1 Hz).
     pub history_capacity: usize,
+    /// Maximum distinct sensor descriptors retained (prevents cardinality exhaustion).
+    pub max_sensors: usize,
+    /// Maximum distinct hardware inventory nodes retained.
+    pub max_inventory_nodes: usize,
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             history_capacity: 3600,
+            max_sensors: 2048,
+            max_inventory_nodes: 1024,
         }
     }
 }
@@ -157,14 +163,11 @@ impl SensorStore {
     pub fn ingest(&mut self, output: ProbeOutput) {
         for desc in output.descriptors {
             let id = desc.id.clone();
-            match self.series.get_mut(&id) {
-                Some(existing) => {
-                    existing.descriptor = desc;
-                }
-                None => {
-                    let s = SensorSeries::new(desc, self.config.history_capacity);
-                    self.series.insert(id, s);
-                }
+            if let Some(existing) = self.series.get_mut(&id) {
+                existing.descriptor = desc;
+            } else if self.series.len() < self.config.max_sensors {
+                let s = SensorSeries::new(desc, self.config.history_capacity);
+                self.series.insert(id, s);
             }
         }
 
@@ -175,7 +178,11 @@ impl SensorStore {
         }
 
         for node in output.inventory {
-            self.inventory.insert(node.id.clone(), node);
+            if self.inventory.contains_key(&node.id)
+                || self.inventory.len() < self.config.max_inventory_nodes
+            {
+                self.inventory.insert(node.id.clone(), node);
+            }
         }
 
         if let Some(patch) = output.summary_patch {
@@ -392,6 +399,7 @@ mod tests {
     fn ring_buffer_and_stats_are_bounded_and_accurate() {
         let mut store = SensorStore::new(StoreConfig {
             history_capacity: 3,
+            ..StoreConfig::default()
         });
         let mut out = ProbeOutput::default();
         out.descriptors.push(test_desc("test.dev.temp.a"));
@@ -422,5 +430,32 @@ mod tests {
         assert_eq!(r2.stats.min, 102.0);
         assert_eq!(r2.stats.max, 102.0);
         assert_eq!(r2.stats.samples, 1);
+    }
+
+    #[test]
+    fn cardinality_cap_bounds_sensor_and_inventory_growth() {
+        let mut store = SensorStore::new(StoreConfig {
+            history_capacity: 10,
+            max_sensors: 2,
+            max_inventory_nodes: 2,
+        });
+        let mut out = ProbeOutput::default();
+        for i in 0..10 {
+            out.descriptors.push(test_desc(&format!("test.dev.temp.s{i}")));
+            out.samples
+                .push(RawSample::new(format!("test.dev.temp.s{i}"), i as f64, 1000));
+            out.inventory.push(InventoryNode {
+                id: format!("node_{i}"),
+                parent_id: None,
+                kind: hwinfo64l_protocol::InventoryKind::Plugin,
+                label: format!("Node {i}"),
+                properties: BTreeMap::new(),
+                source: "test".into(),
+            });
+        }
+        store.ingest(out);
+        assert_eq!(store.descriptors().len(), 2);
+        assert_eq!(store.readings(None).len(), 2);
+        assert_eq!(store.inventory().len(), 2);
     }
 }
