@@ -1,0 +1,23 @@
+[Unit]
+Description=HWInfo64L Read-Only Hardware Telemetry Daemon
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hwinfo64ld
+Restart=on-failure
+RestartSec=2s
+RuntimeDirectory=hwinfo64l
+RuntimeDirectoryMode=0755
+
+# Strictly read-only security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_SYS_RAWIO CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_SYS_RAWIO CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+[package]
+name = "hwinfo64l-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "hwinfo64l"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap.workspace = true
+hwinfo64l-core.workspace = true
+hwinfo64l-probes.workspace = true
+hwinfo64l-protocol.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

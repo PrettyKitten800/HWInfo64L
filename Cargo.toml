@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hwinfo64l-protocol",
+    "crates/hwinfo64l-core",
+    "crates/hwinfo64l-probes",
+    "crates/hwinfo64ld",
+    "crates/hwinfo64l-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/PrettyKitten800/HWInfo64L"
+authors = ["HWInfo64L Contributors"]
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[workspace.dependencies]
+hwinfo64l-protocol = { path = "crates/hwinfo64l-protocol" }
+hwinfo64l-core = { path = "crates/hwinfo64l-core" }
+hwinfo64l-probes = { path = "crates/hwinfo64l-probes" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "process", "io-util", "signal", "fs"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
