@@ -72,28 +72,30 @@ impl InventoryView {
     }
 
     pub fn update(&mut self, incoming: &[InventoryNode]) {
-        if incoming.len() == self.last_hash_len && *self.nodes.borrow() == incoming {
+        let ordered = order_tree(incoming);
+        if ordered.len() == self.last_hash_len && *self.nodes.borrow() == ordered {
             return;
         }
-        self.last_hash_len = incoming.len();
-        *self.nodes.borrow_mut() = incoming.to_vec();
+        self.last_hash_len = ordered.len();
+        *self.nodes.borrow_mut() = ordered.clone();
 
         while let Some(child) = self.tree_list.first_child() {
             self.tree_list.remove(&child);
         }
 
-        for node in incoming {
-            let prefix = if node.parent_id.is_none() {
-                "💻 "
-            } else if node.parent_id.as_deref() == Some("memory_array") {
-                "      ▪ "
-            } else {
-                "   ▸ "
+        let depths = compute_depths(&ordered);
+        for (node, depth) in ordered.iter().zip(depths.into_iter()) {
+            let indent = "   ".repeat(depth);
+            let bullet = match depth {
+                0 => "💻 ",
+                1 => "▸ ",
+                _ => "▪ ",
             };
-            let lbl = Label::new(Some(&format!("{prefix}{}", node.label)));
+            let lbl = Label::new(Some(&format!("{indent}{bullet}{}", node.label)));
             lbl.set_xalign(0.0);
-            lbl.set_margin_top(4);
-            lbl.set_margin_bottom(4);
+            lbl.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            lbl.set_margin_top(3);
+            lbl.set_margin_bottom(3);
             lbl.set_margin_start(6);
             lbl.set_margin_end(6);
             self.tree_list.append(&lbl);
@@ -101,10 +103,60 @@ impl InventoryView {
 
         if let Some(first_row) = self.tree_list.row_at_index(0) {
             self.tree_list.select_row(Some(&first_row));
-        } else if let Some(first) = incoming.first() {
+        } else if let Some(first) = ordered.first() {
             render_node_details(&self.detail_box, first);
         }
     }
+}
+
+fn order_tree(nodes: &[InventoryNode]) -> Vec<InventoryNode> {
+    let mut out = Vec::with_capacity(nodes.len());
+    let mut visited = std::collections::BTreeSet::new();
+
+    fn walk(
+        parent: Option<&str>,
+        nodes: &[InventoryNode],
+        visited: &mut std::collections::BTreeSet<String>,
+        out: &mut Vec<InventoryNode>,
+    ) {
+        for n in nodes {
+            if n.parent_id.as_deref() == parent && visited.insert(n.id.clone()) {
+                out.push(n.clone());
+                walk(Some(n.id.as_str()), nodes, visited, out);
+            }
+        }
+    }
+
+    walk(None, nodes, &mut visited, &mut out);
+    // Append any orphans whose parent wasn't present
+    for n in nodes {
+        if visited.insert(n.id.clone()) {
+            out.push(n.clone());
+        }
+    }
+    out
+}
+
+fn compute_depths(nodes: &[InventoryNode]) -> Vec<usize> {
+    let parent_map: std::collections::BTreeMap<&str, Option<&str>> = nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n.parent_id.as_deref()))
+        .collect();
+    nodes
+        .iter()
+        .map(|n| {
+            let mut d = 0usize;
+            let mut cur = n.parent_id.as_deref();
+            while let Some(p) = cur {
+                d += 1;
+                if d > 6 {
+                    break;
+                }
+                cur = parent_map.get(p).copied().flatten();
+            }
+            d
+        })
+        .collect()
 }
 
 fn render_node_details(detail_box: &GtkBox, node: &InventoryNode) {

@@ -10,8 +10,8 @@ use hwinfo64l_core::{
 };
 use hwinfo64l_protocol::{
     HelloResponse, InventoryNode, JsonRpcRequest, JsonRpcResponse, ListSensorsResponse,
-    ProbeHealth, PropertyValue, SensorDescriptor, SensorReading, SensorStatus, SystemSummary,
-    DEFAULT_SOCKET_PATH, PROTOCOL_VERSION,
+    ProbeHealth, PropertyValue, SensorDescriptor, SensorKind, SensorReading, SensorStatus,
+    SystemSummary, DEFAULT_SOCKET_PATH, PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -448,19 +448,32 @@ fn print_sensors(
                 SensorStatus::Stale => "STALE",
                 SensorStatus::Unavailable => "N/A",
             };
-            println!(
-                "  {:<32} {:>8.2} {:<3} {:>8.2} {:<3} {:>8.2} {:<3} {:>8.2} {:<3} {}",
-                truncate(&d.name, 32),
-                r.value,
-                &d.unit,
-                r.stats.min,
-                &d.unit,
-                r.stats.max,
-                &d.unit,
-                r.stats.avg,
-                &d.unit,
-                status_tag
-            );
+            if d.kind == SensorKind::BooleanFlag {
+                let yn = |v: f64| if v >= 0.5 { "Yes" } else { "No" };
+                println!(
+                    "  {:<32} {:>12} {:>12} {:>12} {:>12} {}",
+                    truncate(&d.name, 32),
+                    yn(r.value),
+                    yn(r.stats.min),
+                    yn(r.stats.max),
+                    yn(r.stats.avg),
+                    status_tag
+                );
+            } else {
+                println!(
+                    "  {:<32} {:>8.2} {:<3} {:>8.2} {:<3} {:>8.2} {:<3} {:>8.2} {:<3} {}",
+                    truncate(&d.name, 32),
+                    r.value,
+                    &d.unit,
+                    r.stats.min,
+                    &d.unit,
+                    r.stats.max,
+                    &d.unit,
+                    r.stats.avg,
+                    &d.unit,
+                    status_tag
+                );
+            }
         }
     }
 }

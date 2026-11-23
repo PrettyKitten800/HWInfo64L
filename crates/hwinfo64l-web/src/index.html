@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HWInfo64L — Live Hardware Monitor</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --ok: #3fb950; --warn: #d29922; --crit: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .3px; }
+  .tabs { display: flex; gap: 6px; }
+  .tab { background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  .tab.active { color: var(--text); border-color: var(--accent); background: rgba(88,166,255,.15); }
+  .spacer { flex: 1; }
+  input[type=search] { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; width: 230px; }
+  button.act { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  button.act:hover { border-color: var(--accent); }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(63,185,80,.45); color: var(--ok); background: rgba(63,185,80,.15); }
+  main { padding: 12px 14px; max-width: 1280px; margin: 0 auto; }
+  .hidden { display: none; }
+  .group { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+  .group-hdr { padding: 6px 10px; font-weight: 700; background: rgba(255,255,255,.03); border-bottom: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 4px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.04); }
+  th { color: var(--muted); font-size: 11.5px; font-weight: 600; }
+  td.num, th.num { text-align: right; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .st-ok { color: var(--ok); font-weight: 700; }
+  .st-warn { color: var(--warn); font-weight: 700; }
+  .st-crit { color: var(--crit); font-weight: 700; }
+  .st-muted { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 10px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .card h2 { margin: 0 0 8px; font-size: 14px; color: var(--accent); }
+  .kv { display: grid; grid-template-columns: 140px 1fr; gap: 4px 10px; }
+  .kv .k { color: var(--muted); font-weight: 600; }
+  .spark { width: 84px; height: 18px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HWInfo64L</h1>
+  <div class="tabs">
+    <button class="tab active" data-tab="sensors">Sensors</button>
+    <button class="tab" data-tab="summary">Summary</button>
+    <button class="tab" data-tab="probes">Probes &amp; Plugins</button>
+  </div>
+  <input id="filter" type="search" placeholder="Filter sensors (temp, power, msr, gpu)..." />
+  <button class="act" id="resetBtn">Reset Min/Max</button>
+  <a class="act" href="/metrics" target="_blank" style="text-decoration:none">/metrics</a>
+  <div class="spacer"></div>
+  <span id="badge" class="badge">Live</span>
+</header>
+<main>
+  <section id="tab-sensors"></section>
+  <section id="tab-summary" class="hidden"></section>
+  <section id="tab-probes" class="hidden"></section>
+</main>
+<script>
+const historyMap = new Map();
+let activeTab = 'sensors';
+let filterText = '';
+
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.onclick = () => {
+    activeTab = btn.dataset.tab;
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === btn));
+    ['sensors','summary','probes'].forEach(t => {
+      document.getElementById('tab-' + t).classList.toggle('hidden', t !== activeTab);
+    });
+  };
+});
+document.getElementById('filter').oninput = e => { filterText = e.target.value.trim().toLowerCase(); };
+document.getElementById('resetBtn').onclick = async () => { await fetch('/api/v1/reset', { method: 'POST' }); };
+
+function fmtVal(d, v) {
+  if (d.kind === 'boolean_flag') return v >= 0.5 ? 'Yes' : 'No';
+  return d.unit ? `${v.toFixed(2)} ${d.unit}` : v.toFixed(2);
+}
+function sparkSvg(arr) {
+  if (!arr || arr.length < 2) return '';
+  let lo = Math.min(...arr), hi = Math.max(...arr);
+  if (Math.abs(hi - lo) < 1e-6) { lo -= 1; hi += 1; }
+  const pts = arr.map((v, i) => {
+    const x = (i / (arr.length - 1)) * 82 + 1;
+    const y = 16 - ((v - lo) / (hi - lo)) * 14 + 1;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg class="spark" viewBox="0 0 84 18"><polyline fill="none" stroke="#58a6ff" stroke-width="1.4" points="${pts}"/></svg>`;
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+async function refresh() {
+  try {
+    const [sRes, sumRes] = await Promise.all([fetch('/api/v1/sensors'), fetch('/api/v1/summary')]);
+    const sensors = await sRes.json();
+    const summary = await sumRes.json();
+    const byId = new Map(sensors.readings.map(r => [r.id, r]));
+
+    for (const r of sensors.readings) {
+      let arr = historyMap.get(r.id);
+      if (!arr) { arr = []; historyMap.set(r.id, arr); }
+      arr.push(r.value);
+      if (arr.length > 50) arr.shift();
+    }
+
+    // Sensors
+    const groups = new Map();
+    for (const d of sensors.descriptors) {
+      const r = byId.get(d.id);
+      if (!r) continue;
+      if (filterText && !`${d.group} ${d.name} ${d.id}`.toLowerCase().includes(filterText)) continue;
+      if (!groups.has(d.group)) groups.set(d.group, []);
+      groups.get(d.group).push([d, r]);
+    }
+    let html = '';
+    for (const [g, items] of groups) {
+      html += `<div class="group"><div class="group-hdr">${esc(g)}</div><table><thead><tr><th>Sensor</th><th class="num">Current</th><th class="num">Min</th><th class="num">Max</th><th class="num">Avg</th><th>Trend</th><th>Status</th></tr></thead><tbody>`;
+      for (const [d, r] of items) {
+        const stCls = r.status === 'ok' ? 'st-ok' : r.status === 'warning' ? 'st-warn' : r.status === 'critical' ? 'st-crit' : 'st-muted';
+        html += `<tr><td title="${esc(d.id)}">${esc(d.name)}</td><td class="num">${esc(fmtVal(d, r.value))}</td><td class="num">${esc(fmtVal(d, r.stats.min))}</td><td class="num">${esc(fmtVal(d, r.stats.max))}</td><td class="num">${esc(fmtVal(d, r.stats.avg))}</td><td>${sparkSvg(historyMap.get(d.id))}</td><td class="${stCls}">${esc(r.status.toUpperCase())}</td></tr>`;
+      }
+      html += `</tbody></table></div>`;
+    }
+    document.getElementById('tab-sensors').innerHTML = html || '<p class="st-muted">No matching sensors.</p>';
+
+    // Summary
+    const phys = (summary.memory.total_physical_bytes / 1073741824).toFixed(1);
+    const usable = (summary.memory.usable_bytes / 1073741824).toFixed(2);
+    document.getElementById('tab-summary').innerHTML = `<div class="grid">
+      <div class="card"><h2>CPU</h2><div class="kv">
+        <div class="k">Model</div><div>${esc(summary.cpu.model_name)}</div>
+        <div class="k">Topology</div><div>${summary.cpu.physical_cores}C / ${summary.cpu.logical_cpus}T</div>
+        <div class="k">Power Limits</div><div>PL1: ${summary.cpu.pl1_watts ?? 'N/A'} W | PL2: ${summary.cpu.pl2_watts ?? 'N/A'} W</div>
+      </div></div>
+      <div class="card"><h2>Platform</h2><div class="kv">
+        <div class="k">Hostname</div><div>${esc(summary.hostname)}</div>
+        <div class="k">OS</div><div>${esc(summary.os.pretty_name)} (${esc(summary.os.kernel)})</div>
+        <div class="k">Board</div><div>${esc(summary.motherboard.board_vendor)} ${esc(summary.motherboard.board_name)}</div>
+        <div class="k">BIOS</div><div>${esc(summary.motherboard.bios_version)} (${esc(summary.motherboard.bios_date)})</div>
+      </div></div>
+      <div class="card"><h2>Memory</h2><div class="kv">
+        <div class="k">Capacity</div><div>${phys} GiB physical (${usable} GiB usable)</div>
+        <div class="k">Speed</div><div>${esc(summary.memory.mem_type)} @ ${summary.memory.configured_speed_mts ?? '?'} MT/s (${summary.memory.channels_populated} ch)</div>
+        <div class="k">Zswap</div><div>${summary.memory.zswap_enabled ? 'Enabled (' + esc(summary.memory.zswap_compressor) + ')' : 'Disabled'}</div>
+      </div></div>
+      <div class="card"><h2>GPUs &amp; Drives</h2><div class="kv">
+        ${summary.gpus.map(g => `<div class="k">GPU</div><div>${esc(g.name)} [${esc(g.driver)}]</div>`).join('')}
+        ${summary.drives.map(d => `<div class="k">/dev/${esc(d.device)}</div><div>${esc(d.model)} (${(d.size_bytes/1e9).toFixed(1)} GB, SMART: ${esc(d.smart_health || 'N/A')})</div>`).join('')}
+      </div></div>
+    </div>`;
+
+    // Probes
+    let pHtml = `<div class="group"><div class="group-hdr">Supervised Probes &amp; Plugins</div><table><thead><tr><th>ID</th><th>Name</th><th>State</th><th>Tier</th><th class="num">Poll (µs)</th><th class="num">Errors</th><th>Details</th></tr></thead><tbody>`;
+    for (const p of sensors.probes) {
+      const cls = p.state === 'healthy' ? 'st-ok' : (p.state === 'unsupported' ? 'st-muted' : 'st-warn');
+      pHtml += `<tr><td class="num" style="text-align:left">${esc(p.probe_id)}</td><td>${esc(p.display_name)}</td><td class="${cls}">${esc(p.state)}</td><td>${esc(p.poll_tier)}</td><td class="num">${p.last_poll_duration_us}</td><td class="num">${p.total_errors}</td><td>${esc(p.last_error || '—')}</td></tr>`;
+    }
+    pHtml += `</tbody></table></div>`;
+    document.getElementById('tab-probes').innerHTML = pHtml;
+    document.getElementById('badge').textContent = `${summary.hostname} • ${sensors.readings.length} sensors`;
+  } catch (e) {
+    document.getElementById('badge').textContent = 'Reconnecting...';
+  }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

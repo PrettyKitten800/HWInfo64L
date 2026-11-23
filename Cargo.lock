@@ -568,6 +568,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hwinfo64l-web"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "hwinfo64l-core",
+ "hwinfo64l-probes",
+ "hwinfo64l-protocol",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "hwinfo64ld"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,18 @@
+[Unit]
+Description=HWInfo64L LAN Web Dashboard & Prometheus Exporter
+After=network-online.target hwinfo64ld.service
+Wants=hwinfo64ld.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hwinfo64l-web --bind 0.0.0.0:8640
+Restart=on-failure
+RestartSec=2s
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -6,7 +6,7 @@ use gtk4::prelude::*;
 use gtk4::{
     Box as GtkBox, Button, DrawingArea, Expander, Label, Orientation, ScrolledWindow,
 };
-use hwinfo64l_protocol::{SensorDescriptor, SensorReading, SensorStatus};
+use hwinfo64l_protocol::{SensorDescriptor, SensorKind, SensorReading, SensorStatus};
 
 type GraphCallback = Rc<dyn Fn(SensorDescriptor)>;
 
@@ -103,10 +103,10 @@ impl SensorsView {
             if let (Some(row), Some(r)) = (self.rows.get_mut(&desc.id), reading_map.get(desc.id.as_str()))
             {
                 let u = &desc.unit;
-                row.cur_label.set_text(&format_val(r.value, u));
-                row.min_label.set_text(&format_val(r.stats.min, u));
-                row.max_label.set_text(&format_val(r.stats.max, u));
-                row.avg_label.set_text(&format_val(r.stats.avg, u));
+                row.cur_label.set_text(&format_val(desc.kind, r.value, u));
+                row.min_label.set_text(&format_val(desc.kind, r.stats.min, u));
+                row.max_label.set_text(&format_val(desc.kind, r.stats.max, u));
+                row.avg_label.set_text(&format_val(desc.kind, r.stats.avg, u));
 
                 row.status_label.remove_css_class("status-ok");
                 row.status_label.remove_css_class("status-warn");
@@ -302,7 +302,14 @@ fn make_mono_label(text: &str, width: i32) -> Label {
     lbl
 }
 
-fn format_val(v: f64, unit: &str) -> String {
+fn format_val(kind: SensorKind, v: f64, unit: &str) -> String {
+    if kind == SensorKind::BooleanFlag {
+        return if v >= 0.5 {
+            "Yes".to_string()
+        } else {
+            "No".to_string()
+        };
+    }
     if unit.is_empty() {
         format!("{v:.2}")
     } else {

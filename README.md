@@ -23,10 +23,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PROTOCOL.md](docs/PRO
 
 - `crates/hwinfo64l-protocol` — Versioned `v1` data schema, sensor IDs, JSON-RPC 2.0 & NDJSON plugin contracts
 - `crates/hwinfo64l-core` — Fault-isolated probe supervisor, bounded ring-buffer store, min/max/avg engine, plugin host, CSV logger
-- `crates/hwinfo64l-probes` — Native Linux collectors (`hwmon`, `cpufreq`, `cpu_stat`, `rapl`, `msr`, `memory`, `zswap`, `dmi`, `pci`, `gpu`, `smart`, `net`)
+- `crates/hwinfo64l-probes` — Native Linux collectors (`hwmon`, `cpufreq`, `cpu_stat`, `rapl`, `msr` VID & Performance Limit Reasons, `memory`, `zswap`, `dmi`, `buses` PCIe/USB, `gpu_drm`, `intel_gpu_top`, `nvidia_gpu`, `disk_io`, `smart`, `network`, `battery`)
 - `crates/hwinfo64ld` — Hardened read-only systemd collector daemon
 - `crates/hwinfo64l-cli` — Terminal summary, live watch, JSON dump, and CSV logger
 - `crates/hwinfo64l-gui` — Native GTK4 desktop UI (Summary, Hardware Tree, Live Sensors + Sparklines, Pop-out Graphs, CSV Logging, Probes & Plugins)
+- `crates/hwinfo64l-web` — Lightweight LAN Web Dashboard (`:8640`) + JSON API + Prometheus `/metrics` exporter
 
 ## Quick Start
 
