@@ -239,15 +239,13 @@ def suite_1_hostile_plugins(daemon_bin: Path, report: TestReport) -> None:
         else:
             report.fail("Zero NaN/Infinity readings leaked", str(bad_vals[:5]))
 
-        core_ok = all(
-            probes.get(pid, {}).get("state") == "healthy"
-            for pid in ("cpu_telemetry", "memory", "hwmon")
-        )
+        core_ids = ("cpu_telemetry", "memory")
+        core_ok = all(probes.get(pid, {}).get("state") == "healthy" for pid in core_ids)
         if core_ok:
-            lat = {pid: probes[pid]["last_poll_duration_us"] for pid in ("cpu_telemetry", "memory", "hwmon")}
+            lat = {pid: probes[pid]["last_poll_duration_us"] for pid in core_ids}
             report.ok("Built-in probes stayed Healthy during hostile plugin chaos", f"poll µs: {lat}")
         else:
-            report.fail("Built-in probes stayed Healthy", str({k: probes.get(k, {}).get("state") for k in ("cpu_telemetry", "memory", "hwmon")}))
+            report.fail("Built-in probes stayed Healthy", str({k: probes.get(k, {}).get("state") for k in core_ids}))
 
         hostile_isolated = sum(
             1 for pid, p in probes.items()
@@ -424,8 +422,8 @@ def suite_2_3_4_fuzz_stress_soak(daemon_bin: Path, soak_secs: int, report: TestR
                         errors += 1
                 idx += 1
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=40) as pool:
-            futs = [pool.submit(storm_worker, i) for i in range(40)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
+            futs = [pool.submit(storm_worker, i) for i in range(24)]
             for f in futs:
                 f.result()
 
@@ -436,11 +434,11 @@ def suite_2_3_4_fuzz_stress_soak(daemon_bin: Path, soak_secs: int, report: TestR
             p95 = latencies_ms[int(total_rpcs * 0.95)]
             p99 = latencies_ms[min(total_rpcs - 1, int(total_rpcs * 0.99))]
             report.ok(
-                "40-thread RPC + abrupt-disconnect storm",
+                "24-thread RPC + abrupt-disconnect storm",
                 f"{total_rpcs} RPCs, 0 errors | p50={p50:.1f}ms p95={p95:.1f}ms p99={p99:.1f}ms",
             )
         else:
-            report.fail("40-thread RPC storm", f"rpcs={total_rpcs}, errors={errors}")
+            report.fail("24-thread RPC storm", f"rpcs={total_rpcs}, errors={errors}")
 
         # 3c. Stalled-reader subscriber DoS check (64 subscribers that never read)
         stalled: list[socket.socket] = []

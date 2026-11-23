@@ -464,13 +464,13 @@ fn print_sensors(
                     "  {:<32} {:>8.2} {:<3} {:>8.2} {:<3} {:>8.2} {:<3} {:>8.2} {:<3} {}",
                     truncate(&d.name, 32),
                     r.value,
-                    &d.unit,
+                    d.unit,
                     r.stats.min,
-                    &d.unit,
+                    d.unit,
                     r.stats.max,
-                    &d.unit,
+                    d.unit,
                     r.stats.avg,
-                    &d.unit,
+                    d.unit,
                     status_tag
                 );
             }
