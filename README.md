@@ -29,31 +29,41 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PROTOCOL.md](docs/PROTOC
 - `crates/hwinfo64l-cli` — Terminal summary, live watch, JSON dump, and CSV logger
 - `crates/hwinfo64l-gui` — Native GTK4 desktop UI (Summary, Hardware Tree, Live Sensors + Sparklines, Pop-out Graphs, CSV Logging, Probes & Plugins)
 
-## Quick Start
+## Install & Quick Start
 
+### Option 1 — Prebuilt `.deb` (Debian / Ubuntu / Mint / Pop!_OS)
+Download `hwinfo64l_<version>_amd64.deb` from the [GitHub Releases](https://github.com/PrettyKitten800/HWInfo64L/releases) page and run:
 ```bash
-# Build all binaries (daemon, CLI, GTK4 GUI)
-cargo build --release --workspace
-
-# Run CLI right away (connects to hwinfo64ld if running, otherwise local mode)
-./target/release/hwinfo64l summary
-./target/release/hwinfo64l watch
-
-# Run the native GTK4 GUI
-./target/release/hwinfo64l-gui
+sudo apt install ./hwinfo64l_*_amd64.deb
+hwinfo64l-gui
 ```
 
-### Optional: Install `hwinfo64ld` Systemd Daemon (for full SMART / RAPL / SMBIOS telemetry)
-
+### Option 2 — One-Command Build & Install (Debian / Ubuntu / Fedora / Arch / openSUSE)
 ```bash
-sudo install -m 755 target/release/hwinfo64ld /usr/local/bin/
-sudo install -m 755 target/release/hwinfo64l /usr/local/bin/
-sudo install -m 755 target/release/hwinfo64l-gui /usr/local/bin/
-sudo install -m 644 packaging/systemd/hwinfo64ld.service /etc/systemd/system/
-sudo install -m 644 packaging/desktop/hwinfo64l.desktop /usr/local/share/applications/
-sudo systemctl daemon-reload
-sudo systemctl enable --now hwinfo64ld.service
+git clone https://github.com/PrettyKitten800/HWInfo64L.git
+cd HWInfo64L
+./scripts/install.sh
 ```
+Want to test **without installing a root daemon** (unprivileged `~/.local/bin` only)?
+```bash
+./scripts/install.sh --no-daemon
+```
+Cleanly remove everything at any time:
+```bash
+./scripts/uninstall.sh
+```
+
+### CLI & GUI Usage
+```bash
+hwinfo64l-gui              # Launch native GTK4 desktop app (also in your app menu)
+hwinfo64l summary          # Hardware summary
+hwinfo64l watch            # Live terminal sensor table
+hwinfo64l probes           # Diagnostic health & poll latency for every probe/plugin
+hwinfo64l log-csv out.csv  # HWiNFO64-compatible CSV logging
+```
+
+### Tester Feedback Tip
+If a sensor or hardware category is missing on your machine, run `hwinfo64l probes` and `hwinfo64l summary` and share the output in an issue — every probe reports its exact `Healthy` / `Unsupported` / `RequiresPrivilege` / `Degraded` reason!
 
 ## License
 
