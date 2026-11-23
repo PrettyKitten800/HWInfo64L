@@ -52,9 +52,27 @@ impl CsvLogger {
 }
 
 fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
-        format!("\"{}\"", s.replace('"', "\"\""))
+    // Neutralize spreadsheet formula injection (=, +, -, @, tab, CR)
+    let neutralized = match s.chars().next() {
+        Some('=' | '+' | '-' | '@' | '\t' | '\r') => format!("'{s}"),
+        _ => s.to_string(),
+    };
+    if neutralized.contains(',') || neutralized.contains('"') || neutralized.contains('\n') {
+        format!("\"{}\"", neutralized.replace('"', "\"\""))
     } else {
-        s.to_string()
+        neutralized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_escape_neutralizes_formula_injection() {
+        assert_eq!(csv_escape("=CMD|' /C calc'!A0"), "\"'=CMD|' /C calc'!A0\"".replace('"', ""));
+        assert!(csv_escape("+SUM(A1:A2)").starts_with("'+"));
+        assert!(csv_escape("@HYPERLINK(\"x\")").starts_with("\"'@"));
+        assert_eq!(csv_escape("CPU Temp"), "CPU Temp");
     }
 }

@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
@@ -8,7 +7,7 @@ use hwinfo64l_core::{now_epoch_ms, Probe, ProbeError, ProbeOutput, RawSample};
 use hwinfo64l_protocol::{PollTier, SensorDescriptor, SensorKind};
 use serde_json::Value;
 
-use crate::util::{is_effective_root, sanitize_key};
+use crate::util::{is_effective_root, resolve_trusted_binary, sanitize_key};
 
 /// Slow-tier SMART drive health & temperature probe via `smartctl -a -j`.
 pub struct SmartProbe;
@@ -53,10 +52,8 @@ impl Probe for SmartProbe {
             ));
         }
 
-        let bin = if Path::new("/usr/sbin/smartctl").exists() {
-            "/usr/sbin/smartctl"
-        } else {
-            "smartctl"
+        let Some(bin) = resolve_trusted_binary("smartctl") else {
+            return Err(ProbeError::Unsupported("smartctl not installed".into()));
         };
 
         let Ok(entries) = fs::read_dir("/sys/block") else {
@@ -78,12 +75,12 @@ impl Probe for SmartProbe {
         let ts = now_epoch_ms();
 
         for dev in drives {
+            if !dev.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                continue;
+            }
             let dev_path = format!("/dev/{dev}");
-            let output = match Command::new(bin).args(["-a", "-j", &dev_path]).output() {
+            let output = match Command::new(&bin).args(["-a", "-j", "--", &dev_path]).output() {
                 Ok(o) => o,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(ProbeError::Unsupported("smartctl not installed".into()));
-                }
                 Err(_) => continue,
             };
 

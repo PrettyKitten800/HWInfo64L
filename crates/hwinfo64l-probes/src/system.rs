@@ -10,7 +10,7 @@ use hwinfo64l_protocol::{
     OsSummary, PollTier, PropertyValue,
 };
 
-use crate::util::{read_trimmed, read_u64};
+use crate::util::{read_trimmed, read_u64, resolve_trusted_binary};
 
 /// Static probe populating SystemSummary & Hardware Tree inventory nodes
 /// for OS, CPU, Motherboard/BIOS, GPUs, and Block Drives.
@@ -385,7 +385,15 @@ fn read_gpu_summaries() -> Vec<GpuSummary> {
 }
 
 fn lookup_lspci_name(slot: &str) -> Option<String> {
-    let out = Command::new("lspci").args(["-s", slot]).output().ok()?;
+    if slot.is_empty()
+        || !slot
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.')
+    {
+        return None;
+    }
+    let bin = resolve_trusted_binary("lspci")?;
+    let out = Command::new(bin).args(["-s", slot]).output().ok()?;
     if !out.status.success() {
         return None;
     }

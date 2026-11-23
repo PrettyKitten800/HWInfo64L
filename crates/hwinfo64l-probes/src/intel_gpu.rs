@@ -8,7 +8,7 @@ use hwinfo64l_core::{now_epoch_ms, Probe, ProbeError, ProbeOutput, RawSample};
 use hwinfo64l_protocol::{PollTier, SensorDescriptor, SensorKind};
 use serde_json::Value;
 
-use crate::util::{is_effective_root, read_trimmed, sanitize_key};
+use crate::util::{is_effective_root, read_trimmed, resolve_trusted_binary, sanitize_key};
 
 #[derive(Debug, Default, Clone)]
 struct IntelGpuSnapshot {
@@ -52,7 +52,13 @@ impl IntelGpuTopProbe {
             }
         }
 
-        let mut child = match Command::new("intel_gpu_top")
+        let Some(bin) = resolve_trusted_binary("intel_gpu_top") else {
+            return Err(ProbeError::Unsupported(
+                "intel_gpu_top not installed in trusted system path".into(),
+            ));
+        };
+
+        let mut child = match Command::new(bin)
             .args(["-J", "-s", "1000"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -60,11 +66,6 @@ impl IntelGpuTopProbe {
             .spawn()
         {
             Ok(c) => c,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(ProbeError::Unsupported(
-                    "intel_gpu_top not installed".into(),
-                ));
-            }
             Err(e) => return Err(ProbeError::Io(e)),
         };
 

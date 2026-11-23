@@ -1,5 +1,31 @@
 use std::fs;
-use std::path::Path;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+
+/// Trusted system binary search paths (never consults untrusted `$PATH`).
+const TRUSTED_BIN_DIRS: &[&str] = &["/usr/sbin", "/usr/bin", "/sbin", "/bin"];
+
+/// Resolve a system binary strictly inside trusted root-owned system directories,
+/// verifying root ownership (`uid == 0`) and rejecting group/world-writable files.
+pub(crate) fn resolve_trusted_binary(name: &str) -> Option<PathBuf> {
+    if name.is_empty() || name.contains('/') || name.contains('\0') {
+        return None;
+    }
+    for dir in TRUSTED_BIN_DIRS {
+        let candidate = Path::new(dir).join(name);
+        let Ok(canon) = fs::canonicalize(&candidate) else {
+            continue;
+        };
+        let Ok(meta) = fs::metadata(&canon) else {
+            continue;
+        };
+        let mode = meta.permissions().mode();
+        if meta.is_file() && meta.uid() == 0 && (mode & 0o111) != 0 && (mode & 0o022) == 0 {
+            return Some(canon);
+        }
+    }
+    None
+}
 
 /// Read a sysfs/procfs file and trim trailing whitespace.
 pub(crate) fn read_trimmed(path: impl AsRef<Path>) -> Option<String> {

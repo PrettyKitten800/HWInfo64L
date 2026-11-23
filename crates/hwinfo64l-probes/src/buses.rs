@@ -5,7 +5,7 @@ use std::process::Command;
 use hwinfo64l_core::{Probe, ProbeError, ProbeOutput};
 use hwinfo64l_protocol::{InventoryKind, InventoryNode, PollTier, PropertyValue};
 
-use crate::util::{read_trimmed, sanitize_key};
+use crate::util::{read_trimmed, resolve_trusted_binary, sanitize_key};
 
 /// Static probe enumerating PCIe devices (with link speed & lane width) and
 /// USB devices into the Hardware Tree.
@@ -138,7 +138,10 @@ fn collect_pci(out: &mut ProbeOutput, source: &str) {
 
 fn load_lspci_names() -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
-    let Ok(out) = Command::new("lspci").output() else {
+    let Some(bin) = resolve_trusted_binary("lspci") else {
+        return map;
+    };
+    let Ok(out) = Command::new(bin).output() else {
         return map;
     };
     if !out.status.success() {

@@ -7,7 +7,7 @@ use hwinfo64l_protocol::{
     InventoryKind, InventoryNode, MemoryModuleSummary, PollTier, PropertyValue,
 };
 
-use crate::util::is_effective_root;
+use crate::util::{is_effective_root, resolve_trusted_binary};
 
 /// Static RAM SMBIOS/DMI probe.
 ///
@@ -190,7 +190,8 @@ struct ParsedDmiMemory {
 }
 
 fn parse_udev_dmi() -> Option<ParsedDmiMemory> {
-    let out = Command::new("udevadm")
+    let bin = resolve_trusted_binary("udevadm")?;
+    let out = Command::new(bin)
         .args(["info", "--query=property", "--path=/sys/class/dmi/id"])
         .output()
         .ok()?;
@@ -290,11 +291,7 @@ fn parse_udev_dmi() -> Option<ParsedDmiMemory> {
 }
 
 fn parse_dmidecode() -> Option<ParsedDmiMemory> {
-    let bin = if std::path::Path::new("/usr/sbin/dmidecode").exists() {
-        "/usr/sbin/dmidecode"
-    } else {
-        "dmidecode"
-    };
+    let bin = resolve_trusted_binary("dmidecode")?;
     let out = Command::new(bin).args(["-t", "memory"]).output().ok()?;
     if !out.status.success() {
         return None;

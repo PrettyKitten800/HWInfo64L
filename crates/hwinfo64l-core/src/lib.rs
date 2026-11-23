@@ -11,7 +11,9 @@ pub mod store;
 pub mod supervisor;
 
 pub use csv_logger::CsvLogger;
-pub use plugin::{discover_plugin_executables, NdjsonPluginProbe};
+pub use plugin::{
+    discover_plugin_executables, discover_trusted_root_plugins, NdjsonPluginProbe,
+};
 pub use probe::{now_epoch_ms, Probe, ProbeError, ProbeOutput, RawSample};
 pub use store::{SensorStore, StoreConfig};
 pub use supervisor::{CoreEngine, SupervisorConfig};

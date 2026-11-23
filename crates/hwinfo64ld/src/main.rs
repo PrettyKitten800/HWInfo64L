@@ -1,12 +1,13 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
 use hwinfo64l_core::{
-    discover_plugin_executables, now_epoch_ms, CoreEngine, NdjsonPluginProbe, SupervisorConfig,
+    discover_plugin_executables, discover_trusted_root_plugins, now_epoch_ms, CoreEngine,
+    NdjsonPluginProbe, SupervisorConfig,
 };
 use hwinfo64l_protocol::{
     HelloResponse, HistoryResponse, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
@@ -17,7 +18,7 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, Semaphore};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 /// Maximum concurrent Unix socket clients accepted by `hwinfo64ld`.
@@ -26,6 +27,8 @@ const MAX_CONCURRENT_CLIENTS: usize = 64;
 const MAX_RPC_LINE_BYTES: usize = 64 * 1024;
 /// Idle read timeout for non-subscribed connections.
 const IDLE_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Hard write timeout to prevent stalled-reader subscriber DoS.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,6 +40,14 @@ struct Args {
     /// Path to the Unix domain socket.
     #[arg(long, env = "HWINFO64L_SOCKET", default_value = DEFAULT_SOCKET_PATH)]
     socket: PathBuf,
+
+    /// Octal permissions for the Unix domain socket (e.g. 0666 or 0660 for group-restricted servers).
+    #[arg(long, default_value = "0666")]
+    socket_mode: String,
+
+    /// Disallow unprivileged clients from calling `v1.reset_stats`.
+    #[arg(long)]
+    disallow_reset: bool,
 
     /// Directory scanned for system-wide NDJSON plugins.
     #[arg(long, default_value = "/usr/lib/hwinfo64l/plugins")]
@@ -64,17 +75,31 @@ async fn main() {
 }
 
 async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    let socket_mode = u32::from_str_radix(args.socket_mode.trim_start_matches('0'), 8)
+        .unwrap_or(0o660)
+        & 0o777;
+
     if let Some(parent) = args.socket.parent() {
         fs::create_dir_all(parent)?;
     }
-    if args.socket.exists() {
-        let _ = fs::remove_file(&args.socket);
+
+    // Refuse to unlink symlinks or non-socket files at the target socket path.
+    if let Ok(meta) = fs::symlink_metadata(&args.socket) {
+        if meta.file_type().is_socket() {
+            fs::remove_file(&args.socket)?;
+        } else {
+            return Err(format!(
+                "refusing to remove non-socket path at {}",
+                args.socket.display()
+            )
+            .into());
+        }
     }
 
     let listener = UnixListener::bind(&args.socket)?;
-    // Socket serves strictly read-only telemetry; allow unprivileged local users to connect.
-    fs::set_permissions(&args.socket, fs::Permissions::from_mode(0o666))?;
+    fs::set_permissions(&args.socket, fs::Permissions::from_mode(socket_mode))?;
 
+    let privileged = is_effective_root();
     let mut cfg = SupervisorConfig::default();
     cfg.store.history_capacity = args.history_capacity;
     let engine = CoreEngine::new(cfg);
@@ -83,24 +108,30 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         engine.register_probe(probe);
     }
 
-    for exec in discover_plugin_executables(&args.plugin_dir) {
+    let plugins = if privileged {
+        discover_trusted_root_plugins(&args.plugin_dir)
+    } else {
+        discover_plugin_executables(&args.plugin_dir)
+    };
+    for exec in plugins {
         info!(plugin = %exec.display(), "registering system plugin");
         engine.register_probe(Box::new(NdjsonPluginProbe::new(exec)));
     }
 
     info!(
         socket = %args.socket.display(),
+        mode = format!("{socket_mode:04o}"),
         version = env!("CARGO_PKG_VERSION"),
         "hwinfo64ld listening"
     );
 
-    let privileged = is_effective_root();
     let hostname = fs::read_to_string("/etc/hostname")
         .or_else(|_| fs::read_to_string("/proc/sys/kernel/hostname"))
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
 
     let conn_limit = Arc::new(Semaphore::new(MAX_CONCURRENT_CLIENTS));
+    let disallow_reset = args.disallow_reset;
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
     loop {
@@ -109,7 +140,7 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 match accept_res {
                     Ok((stream, _addr)) => {
                         let Ok(permit) = Arc::clone(&conn_limit).try_acquire_owned() else {
-                            warn!("max concurrent clients ({MAX_CONCURRENT_CLIENTS}) reached; dropping connection");
+                            debug!("max concurrent clients ({MAX_CONCURRENT_CLIENTS}) reached; dropping connection");
                             drop(stream);
                             continue;
                         };
@@ -117,8 +148,8 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                         let host = hostname.clone();
                         tokio::spawn(async move {
                             let _permit = permit;
-                            if let Err(e) = handle_client(stream, eng, host, privileged).await {
-                                warn!(error = %e, "client disconnected with error");
+                            if let Err(e) = handle_client(stream, eng, host, privileged, disallow_reset).await {
+                                debug!(error = %e, "client disconnected");
                             }
                         });
                     }
@@ -157,18 +188,27 @@ async fn handle_client(
     engine: Arc<CoreEngine>,
     hostname: String,
     privileged: bool,
+    disallow_reset: bool,
 ) -> std::io::Result<()> {
     let (read_half, write_half) = stream.into_split();
     let writer = Arc::new(Mutex::new(write_half));
     let mut reader = BufReader::new(read_half);
     let mut sub_task: Option<AbortOnDrop> = None;
+    let mut sub_dead_rx: Option<tokio::sync::oneshot::Receiver<()>> = None;
 
     loop {
-        let read_fut = read_line_bounded_async(&mut reader, MAX_RPC_LINE_BYTES);
-        let line_opt = if sub_task.is_some() {
-            read_fut.await?
+        let line_opt = if let Some(ref mut dead_rx) = sub_dead_rx {
+            tokio::select! {
+                res = read_line_bounded_async(&mut reader, MAX_RPC_LINE_BYTES) => res?,
+                _ = dead_rx => break,
+            }
         } else {
-            match tokio::time::timeout(IDLE_CLIENT_TIMEOUT, read_fut).await {
+            match tokio::time::timeout(
+                IDLE_CLIENT_TIMEOUT,
+                read_line_bounded_async(&mut reader, MAX_RPC_LINE_BYTES),
+            )
+            .await
+            {
                 Ok(res) => res?,
                 Err(_) => break,
             }
@@ -232,12 +272,16 @@ async fn handle_client(
                 serialize_ok(req.id, &payload)
             }
             "v1.reset_stats" => {
-                let ids: Option<Vec<String>> = req
-                    .params
-                    .get("ids")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok());
-                let reset_count = engine.reset_stats(ids.as_deref());
-                serialize_ok(req.id, &ResetStatsResponse { reset_count })
+                if disallow_reset {
+                    JsonRpcResponse::err(req.id, -32001, "reset_stats disabled by daemon policy")
+                } else {
+                    let ids: Option<Vec<String>> = req
+                        .params
+                        .get("ids")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok());
+                    let reset_count = engine.reset_stats(ids.as_deref());
+                    serialize_ok(req.id, &ResetStatsResponse { reset_count })
+                }
             }
             "v1.subscribe" => {
                 let interval_ms = req
@@ -255,6 +299,8 @@ async fn handle_client(
 
                 let eng_sub = Arc::clone(&engine);
                 let writer_sub = Arc::clone(&writer);
+                let (dead_tx, dead_rx) = tokio::sync::oneshot::channel::<()>();
+                sub_dead_rx = Some(dead_rx);
                 sub_task = Some(AbortOnDrop(tokio::spawn(async move {
                     let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms));
                     loop {
@@ -269,6 +315,7 @@ async fn handle_client(
                         };
                         let notif = JsonRpcNotification::new("v1.sensor_batch", params);
                         if write_json_line(&writer_sub, &notif).await.is_err() {
+                            let _ = dead_tx.send(());
                             break;
                         }
                     }
@@ -324,9 +371,15 @@ async fn write_json_line<T: serde::Serialize>(
     let mut encoded = serde_json::to_string(value)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     encoded.push('\n');
-    let mut guard = writer.lock().await;
-    guard.write_all(encoded.as_bytes()).await?;
-    guard.flush().await
+    let mut guard = tokio::time::timeout(WRITE_TIMEOUT, writer.lock())
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "writer lock timed out"))?;
+    tokio::time::timeout(WRITE_TIMEOUT, async {
+        guard.write_all(encoded.as_bytes()).await?;
+        guard.flush().await
+    })
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "client write timed out"))?
 }
 
 fn is_effective_root() -> bool {

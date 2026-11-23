@@ -32,19 +32,22 @@ impl Default for StoreConfig {
 struct SensorSeries {
     descriptor: SensorDescriptor,
     latest: Option<SensorReading>,
-    sum: f64,
+    mean: f64,
     samples: u64,
     min: f64,
     max: f64,
     history: VecDeque<HistorySample>,
 }
 
+/// Hard magnitude bound to prevent floating-point overflow in downstream stats/JSON.
+const MAX_ABS_SENSOR_VALUE: f64 = 1e100;
+
 impl SensorSeries {
     fn new(descriptor: SensorDescriptor, capacity: usize) -> Self {
         Self {
             descriptor,
             latest: None,
-            sum: 0.0,
+            mean: 0.0,
             samples: 0,
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
@@ -53,14 +56,14 @@ impl SensorSeries {
     }
 
     fn push(&mut self, sample: RawSample, capacity: usize) {
-        if !sample.value.is_finite() {
+        if !sample.value.is_finite() || sample.value.abs() > MAX_ABS_SENSOR_VALUE {
             return;
         }
 
         if self.samples == 0 {
             self.min = sample.value;
             self.max = sample.value;
-            self.sum = sample.value;
+            self.mean = sample.value;
             self.samples = 1;
         } else {
             if sample.value < self.min {
@@ -69,11 +72,12 @@ impl SensorSeries {
             if sample.value > self.max {
                 self.max = sample.value;
             }
-            self.sum += sample.value;
             self.samples = self.samples.saturating_add(1);
+            // Welford's online running mean — immune to sum overflow even after decades.
+            self.mean += (sample.value - self.mean) / (self.samples as f64);
         }
 
-        let avg = self.sum / (self.samples as f64);
+        let avg = self.mean;
         let status = sample
             .status_override
             .unwrap_or_else(|| self.evaluate_status(sample.value));
@@ -121,7 +125,7 @@ impl SensorSeries {
             let v = latest.value;
             self.min = v;
             self.max = v;
-            self.sum = v;
+            self.mean = v;
             self.samples = 1;
             latest.stats = SensorStats {
                 min: v,
@@ -132,7 +136,7 @@ impl SensorSeries {
         } else {
             self.min = f64::INFINITY;
             self.max = f64::NEG_INFINITY;
-            self.sum = 0.0;
+            self.mean = 0.0;
             self.samples = 0;
         }
     }
@@ -457,5 +461,23 @@ mod tests {
         assert_eq!(store.descriptors().len(), 2);
         assert_eq!(store.readings(None).len(), 2);
         assert_eq!(store.inventory().len(), 2);
+    }
+
+    #[test]
+    fn extreme_values_never_overflow_mean_to_infinity() {
+        let mut store = SensorStore::new(StoreConfig::default());
+        let mut out = ProbeOutput::default();
+        out.descriptors.push(test_desc("test.dev.temp.x"));
+        out.samples.push(RawSample::new("test.dev.temp.x", 1e308, 1));
+        out.samples.push(RawSample::new("test.dev.temp.x", 1e308, 2));
+        out.samples.push(RawSample::new("test.dev.temp.x", 1e99, 3));
+        out.samples.push(RawSample::new("test.dev.temp.x", 1e99, 4));
+        store.ingest(out);
+
+        let readings = store.readings(None);
+        assert_eq!(readings.len(), 1);
+        assert!(readings[0].value.is_finite());
+        assert!(readings[0].stats.avg.is_finite());
+        assert_eq!(readings[0].stats.samples, 2);
     }
 }

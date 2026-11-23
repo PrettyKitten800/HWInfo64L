@@ -3,6 +3,8 @@ use std::process::Command;
 use hwinfo64l_core::{now_epoch_ms, Probe, ProbeError, ProbeOutput, RawSample};
 use hwinfo64l_protocol::{PollTier, SensorDescriptor, SensorKind};
 
+use crate::util::resolve_trusted_binary;
+
 /// NVIDIA GPU telemetry probe via `nvidia-smi` CSV query.
 /// Cleanly marks itself `Unsupported` on non-NVIDIA systems so it incurs zero overhead.
 pub struct NvidiaGpuProbe;
@@ -33,7 +35,10 @@ impl Probe for NvidiaGpuProbe {
     }
 
     fn poll(&mut self) -> Result<ProbeOutput, ProbeError> {
-        let output = match Command::new("nvidia-smi")
+        let Some(bin) = resolve_trusted_binary("nvidia-smi") else {
+            return Err(ProbeError::Unsupported("nvidia-smi not present".into()));
+        };
+        let output = match Command::new(bin)
             .args([
                 "--query-gpu=index,name,temperature.gpu,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.gr,clocks.mem,power.draw,power.limit,fan.speed",
                 "--format=csv,noheader,nounits",
@@ -41,9 +46,6 @@ impl Probe for NvidiaGpuProbe {
             .output()
         {
             Ok(o) => o,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(ProbeError::Unsupported("nvidia-smi not present".into()));
-            }
             Err(e) => return Err(ProbeError::Io(e)),
         };
 

@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
@@ -7,6 +7,7 @@ use std::time::Duration;
 use hwinfo64l_protocol::{
     PluginFromHost, PluginManifest, PluginToHost, PollTier, PROTOCOL_VERSION,
 };
+use tracing::warn;
 
 use crate::probe::{now_epoch_ms, Probe, ProbeError, ProbeOutput, RawSample};
 
@@ -34,24 +35,55 @@ fn read_line_bounded<R: BufRead>(reader: &mut R, max_bytes: usize) -> Result<Opt
 
 /// Discover executable plugin binaries/scripts in a plugin directory.
 ///
-/// Supports either direct executables (`<dir>/my-plugin`) or one-level
-/// subdirectories (`<dir>/my-plugin/plugin` or any single executable inside).
+/// Always rejects group/world-writable (`mode & 0o022 != 0`) executables.
+/// Use `discover_trusted_root_plugins` when running as root (`hwinfo64ld`).
 pub fn discover_plugin_executables(dir: &Path) -> Vec<PathBuf> {
+    discover_plugins_with_policy(dir, false)
+}
+
+/// Strict plugin discovery for privileged `hwinfo64ld` running as root:
+/// refuses symlinks, non-root-owned directories/files, or group/world-writable paths.
+pub fn discover_trusted_root_plugins(dir: &Path) -> Vec<PathBuf> {
+    discover_plugins_with_policy(dir, true)
+}
+
+fn discover_plugins_with_policy(dir: &Path, require_root_strict: bool) -> Vec<PathBuf> {
     let mut found = Vec::new();
+    let Ok(dir_meta) = std::fs::symlink_metadata(dir) else {
+        return found;
+    };
+    if require_root_strict {
+        if dir_meta.file_type().is_symlink() || !dir_meta.is_dir() {
+            warn!(dir = %dir.display(), "refusing non-directory or symlink root plugin dir");
+            return found;
+        }
+        if dir_meta.uid() != 0 || (dir_meta.permissions().mode() & 0o022) != 0 {
+            warn!(dir = %dir.display(), "refusing untrusted root plugin dir (must be uid 0 and not group/world-writable)");
+            return found;
+        }
+    }
+
     let Ok(entries) = std::fs::read_dir(dir) else {
         return found;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if is_executable_file(&path) {
+        if is_safe_executable(&path, require_root_strict) {
             found.push(path);
-        } else if path.is_dir() {
-            if let Ok(sub) = std::fs::read_dir(&path) {
-                for sub_entry in sub.flatten() {
-                    let sub_path = sub_entry.path();
-                    if is_executable_file(&sub_path) {
-                        found.push(sub_path);
-                        break;
+        } else if !require_root_strict || !is_symlink(&path) {
+            if let Ok(sub_meta) = std::fs::symlink_metadata(&path) {
+                if sub_meta.is_dir()
+                    && (!require_root_strict
+                        || (sub_meta.uid() == 0 && (sub_meta.permissions().mode() & 0o022) == 0))
+                {
+                    if let Ok(sub) = std::fs::read_dir(&path) {
+                        for sub_entry in sub.flatten() {
+                            let sub_path = sub_entry.path();
+                            if is_safe_executable(&sub_path, require_root_strict) {
+                                found.push(sub_path);
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -61,11 +93,39 @@ pub fn discover_plugin_executables(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
-fn is_executable_file(path: &Path) -> bool {
+fn is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn is_safe_executable(path: &Path, require_root_strict: bool) -> bool {
+    let Ok(sym_meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if require_root_strict && sym_meta.file_type().is_symlink() {
+        warn!(plugin = %path.display(), "refusing symlink plugin in root mode");
+        return false;
+    }
     let Ok(meta) = std::fs::metadata(path) else {
         return false;
     };
-    meta.is_file() && (meta.permissions().mode() & 0o111) != 0
+    if !meta.is_file() {
+        return false;
+    }
+    let mode = meta.permissions().mode();
+    if (mode & 0o111) == 0 {
+        return false;
+    }
+    if (mode & 0o022) != 0 {
+        warn!(plugin = %path.display(), "refusing group/world-writable plugin executable");
+        return false;
+    }
+    if require_root_strict && meta.uid() != 0 {
+        warn!(plugin = %path.display(), uid = meta.uid(), "refusing non-root-owned plugin in root mode");
+        return false;
+    }
+    true
 }
 
 struct RunningPlugin {

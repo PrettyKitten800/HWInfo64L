@@ -110,9 +110,9 @@ def read_proc_metrics(pid: int) -> dict[str, int]:
     return {"rss_kb": rss_kb, "threads": threads, "fds": fd_count, "zombies": zombies}
 
 
-def write_exec(path: Path, body: str) -> None:
+def write_exec(path: Path, body: str, mode: int = 0o755) -> None:
     path.write_text(body, encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    path.chmod(mode)
 
 
 def create_hostile_plugins(plugin_dir: Path) -> None:
@@ -154,7 +154,7 @@ for line in sys.stdin:
         sys.stdout.write(json.dumps({"type":"manifest","id":"flood","name":"Flood","version":"1","interval_ms":500,"sensors":sensors,"inventory":[]}) + "\\n")
         sys.stdout.flush()
     elif msg.get("type") == "poll":
-        sys.stdout.write('{"type":"readings","timestamp_ms":' + str(int(time.time()*1000)) + ',"values":{"plugin.flood.dev.temp.s0":42.0,"plugin.flood.dev.temp.s1":NaN}}\\n')
+        sys.stdout.write('{"type":"readings","timestamp_ms":' + str(int(time.time()*1000)) + ',"values":{"plugin.flood.dev.temp.s0":42.0,"plugin.flood.dev.temp.s2":1e308,"plugin.flood.dev.temp.s1":NaN}}\\n')
         sys.stdout.flush()
     elif msg.get("type") == "shutdown":
         break
@@ -174,6 +174,13 @@ for line in sys.stdin:
     elif msg.get("type") == "poll":
         time.sleep(60)
 """,
+    )
+
+    # 6. World-writable plugin (chmod 0777) — MUST be refused before execution
+    write_exec(
+        plugin_dir / "06_world_writable.py",
+        "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n",
+        mode=0o777,
     )
 
 
@@ -250,6 +257,28 @@ def suite_1_hostile_plugins(daemon_bin: Path, report: TestReport) -> None:
             report.ok("Hostile plugins isolated into degraded/circuit_open", f"{hostile_isolated}/5 flagged")
         else:
             report.warn("Hostile plugins isolated", f"only {hostile_isolated}/5 flagged so far")
+
+        if "plugin:06_world_writable" not in probes:
+            report.ok("World-writable plugin (0777) refused before execution")
+        else:
+            report.fail("World-writable plugin (0777) was executed!")
+
+        # Symlink socket refusal test
+        sym_target = tmpdir / "victim.txt"
+        sym_target.write_text("do not delete", encoding="utf-8")
+        sym_sock = tmpdir / "evil.sock"
+        os.symlink(sym_target, sym_sock)
+        sym_rc = subprocess.run(
+            [str(daemon_bin), "--socket", str(sym_sock), "--plugin-dir", str(tmpdir / "empty")],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        ).returncode
+        if sym_rc != 0 and sym_target.exists() and sym_sock.is_symlink():
+            report.ok("Daemon refused to unlink pre-existing symlink at --socket")
+        else:
+            report.fail("Symlink socket refusal", f"rc={sym_rc}, target_exists={sym_target.exists()}")
     finally:
         proc.send_signal(signal.SIGTERM)
         try:
@@ -412,6 +441,35 @@ def suite_2_3_4_fuzz_stress_soak(daemon_bin: Path, soak_secs: int, report: TestR
             )
         else:
             report.fail("40-thread RPC storm", f"rpcs={total_rpcs}, errors={errors}")
+
+        # 3c. Stalled-reader subscriber DoS check (64 subscribers that never read)
+        stalled: list[socket.socket] = []
+        for _ in range(64):
+            ss = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            ss.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+            ss.settimeout(1.0)
+            try:
+                ss.connect(sock_path)
+                ss.sendall(b'{"jsonrpc":"2.0","id":1,"method":"v1.subscribe","params":{"interval_ms":250}}\n')
+                stalled.append(ss)
+            except OSError:
+                ss.close()
+        # Wait for send buffers to fill and 2s write timeout to evict stalled readers
+        evicted_ok = False
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            try:
+                if "result" in rpc_call(sock_path, "v1.hello", timeout=1.0):
+                    evicted_ok = True
+                    break
+            except Exception:
+                time.sleep(0.3)
+        for ss in stalled:
+            ss.close()
+        if evicted_ok:
+            report.ok("Stalled-reader subscriber DoS defeated (write timeout evicted non-draining clients)")
+        else:
+            report.fail("Stalled-reader subscriber DoS", "daemon remained locked after 64 stalled subscribers")
 
         # --- Suite 4: Mini-Soak (RAM, FD, Thread & Zombie Leak Check) ---
         print(f"\n=== Suite 4: Soak Endurance Test ({soak_secs}s) ===")
