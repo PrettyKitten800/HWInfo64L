@@ -18,9 +18,9 @@ HWInfo64L separates **hardware probing**, **state & statistics**, **transport**,
                                     |
          +--------------------------+--------------------------+
          |                          |                          |
-   hwinfo64l-gui              hwinfo64l-cli             External Clients
-   (Native GTK4)           (watch / summary /        (Web UI, Prometheus,
-   + User Plugins            json / csv)              Waybar, Home Asst)
+   hwinfo64l-gui              hwinfo64l-cli             Local Clients
+   (Native GTK4)           (watch / summary /        (Waybar, Polybar,
+   + User Plugins            json / csv)              local scripts, OSD)
    (~/.config/hwinfo64l/plugins — unprivileged)
 ```
 

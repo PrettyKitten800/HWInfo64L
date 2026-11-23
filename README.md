@@ -13,21 +13,21 @@ Linux has great low-level telemetry scattered across dozens of interfaces (`hwmo
 - **Never-fails Rust core (`hwinfo64l-core` + `hwinfo64ld`)**: Zero-panic policy, bounded ring buffers (flat ~10–15 MiB RAM forever), per-probe timeouts, and circuit breakers so a hung drive or bad plugin can never freeze or crash the app.
 - **Split privilege model**: A tiny, strictly **read-only** hardened systemd daemon (`hwinfo64ld`) handles root-only telemetry (SMART, SMBIOS/DMI, MSRs) and streams data over `/run/hwinfo64l/hwinfo64l.sock`. If the daemon isn't installed, the CLI/GUI automatically falls back to unprivileged in-process probing.
 - **Native GTK4 desktop GUI (`hwinfo64l-gui`)**: Dense, HWiNFO64-inspired Summary, Hardware Tree, and Live Sensors views with sparklines, pop-out charts, and CSV logging.
+- **Zero open network ports**: Everything communicates strictly over a local Unix domain socket (`/run/hwinfo64l/hwinfo64l.sock`) — no built-in web server or remote listener.
 - **Zero-recompile extensibility**:
   - **Drop-in probe plugins** in any language (Python, Bash, Rust, Go, C) via NDJSON over stdin/stdout.
-  - **Open Unix socket JSON-RPC 2.0 API** so Waybar, Polybar, Home Assistant, Prometheus, Klipper, or a LAN Web UI can connect directly.
+  - **Open local Unix socket JSON-RPC 2.0 API** so Waybar, Polybar, local scripts, or custom desktop widgets can connect directly.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PROTOCOL.md](docs/PROTOCOL.md) for the complete design and wire specifications.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PROTOCOL.md](docs/PROTOCOL.md), and [docs/PLUGIN_GUIDE.md](docs/PLUGIN_GUIDE.md) for the complete design and specifications.
 
 ## Workspace Layout
 
 - `crates/hwinfo64l-protocol` — Versioned `v1` data schema, sensor IDs, JSON-RPC 2.0 & NDJSON plugin contracts
 - `crates/hwinfo64l-core` — Fault-isolated probe supervisor, bounded ring-buffer store, min/max/avg engine, plugin host, CSV logger
 - `crates/hwinfo64l-probes` — Native Linux collectors (`hwmon`, `cpufreq`, `cpu_stat`, `rapl`, `msr` VID & Performance Limit Reasons, `memory`, `zswap`, `dmi`, `buses` PCIe/USB, `gpu_drm`, `intel_gpu_top`, `nvidia_gpu`, `disk_io`, `smart`, `network`, `battery`)
-- `crates/hwinfo64ld` — Hardened read-only systemd collector daemon
+- `crates/hwinfo64ld` — Hardened read-only systemd collector daemon (`AF_UNIX` only)
 - `crates/hwinfo64l-cli` — Terminal summary, live watch, JSON dump, and CSV logger
 - `crates/hwinfo64l-gui` — Native GTK4 desktop UI (Summary, Hardware Tree, Live Sensors + Sparklines, Pop-out Graphs, CSV Logging, Probes & Plugins)
-- `crates/hwinfo64l-web` — Lightweight LAN Web Dashboard (`:8640`) + JSON API + Prometheus `/metrics` exporter
 
 ## Quick Start
 

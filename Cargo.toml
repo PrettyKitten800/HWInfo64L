@@ -7,7 +7,6 @@ members = [
     "crates/hwinfo64ld",
     "crates/hwinfo64l-cli",
     "crates/hwinfo64l-gui",
-    "crates/hwinfo64l-web",
 ]
 
 [workspace.package]

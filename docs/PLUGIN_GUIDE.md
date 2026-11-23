@@ -6,8 +6,7 @@ HWInfo64L supports drop-in hardware/telemetry plugins written in **any language*
 
 | Directory | Runs Under | Best For |
 | :--- | :--- | :--- |
-| `~/.config/hwinfo64l/plugins/` | Unprivileged user (in `hwinfo64l-gui` / `hwinfo64l --local`) | Network APIs (Moonraker/Klipper, Home Assistant, UPS, MQTT), custom user scripts |
-| `/usr/local/share/hwinfo64l/plugins/` | Unprivileged `hwinfo64l-web` (`--plugin-dir`) | Shared unprivileged plugins visible on the LAN Web UI + Prometheus `/metrics` |
+| `~/.config/hwinfo64l/plugins/` | Unprivileged user (in `hwinfo64l-gui` / `hwinfo64l --local`) | Local service APIs (Moonraker/Klipper, UPS, custom scripts) |
 | `/usr/lib/hwinfo64l/plugins/` | `hwinfo64ld` (strictly `AF_UNIX`, read-only) | Local-only privileged system hardware probes |
 
 ## Included Flagship Plugin: Klipper / Kalico (Moonraker)
