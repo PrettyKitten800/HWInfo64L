@@ -84,7 +84,7 @@ impl InventoryView {
         }
 
         let depths = compute_depths(&ordered);
-        for (node, depth) in ordered.iter().zip(depths.into_iter()) {
+        for (node, depth) in ordered.iter().zip(depths) {
             let indent = "   ".repeat(depth);
             let bullet = match depth {
                 0 => "💻 ",

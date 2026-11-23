@@ -15,7 +15,6 @@ edition = "2021"
 rust-version = "1.80"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/PrettyKitten800/HWInfo64L"
-authors = ["HWInfo64L Contributors"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
