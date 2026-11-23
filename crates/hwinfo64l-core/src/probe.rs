@@ -56,6 +56,9 @@ pub struct ProbeOutput {
     pub descriptors: Vec<SensorDescriptor>,
     pub samples: Vec<RawSample>,
     pub inventory: Vec<InventoryNode>,
+    /// When set, existing inventory nodes belonging to this source are replaced
+    /// atomically (enables hotplug/unplug cleanup for dynamic bus probes).
+    pub replace_source_inventory: Option<String>,
     /// Optional partial summary patch applied by probes that know system summary fields.
     pub summary_patch: Option<SummaryPatch>,
 }

@@ -1,14 +1,15 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::process::Command;
+use std::time::Duration;
 
 use hwinfo64l_core::{Probe, ProbeError, ProbeOutput};
 use hwinfo64l_protocol::{InventoryKind, InventoryNode, PollTier, PropertyValue};
 
 use crate::util::{read_trimmed, resolve_trusted_binary, sanitize_key};
 
-/// Static probe enumerating PCIe devices (with link speed & lane width) and
-/// USB devices into the Hardware Tree.
+/// Periodic bus probe enumerating PCIe devices (with link speed & lane width)
+/// and USB devices (with hotplug/unplug refresh every 30s) into the Hardware Tree.
 pub struct BusTopologyProbe;
 
 impl BusTopologyProbe {
@@ -33,7 +34,11 @@ impl Probe for BusTopologyProbe {
     }
 
     fn poll_tier(&self) -> PollTier {
-        PollTier::Static
+        PollTier::Slow
+    }
+
+    fn poll_interval(&self) -> Duration {
+        Duration::from_secs(30)
     }
 
     fn poll(&mut self) -> Result<ProbeOutput, ProbeError> {
@@ -43,6 +48,7 @@ impl Probe for BusTopologyProbe {
         if out.inventory.is_empty() {
             return Err(ProbeError::Unsupported("no PCI or USB devices found".into()));
         }
+        out.replace_source_inventory = Some(self.id().to_string());
         Ok(out)
     }
 }

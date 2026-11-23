@@ -1,11 +1,14 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use hwinfo64l_protocol::{
-    HistorySample, InventoryNode, ProbeHealth, SensorDescriptor, SensorReading, SensorStats,
-    SensorStatus, SystemSummary,
+    HistorySample, InventoryNode, PollTier, ProbeHealth, SensorDescriptor, SensorReading,
+    SensorStats, SensorStatus, SystemSummary,
 };
 
-use crate::probe::{ProbeOutput, RawSample, SummaryPatch};
+use crate::probe::{now_epoch_ms, ProbeOutput, RawSample, SummaryPatch};
+
+const FAST_STALE_MS: u64 = 15_000;
+const SLOW_STALE_MS: u64 = 90_000;
 
 /// Configuration for the bounded in-memory telemetry store.
 #[derive(Debug, Clone)]
@@ -181,6 +184,10 @@ impl SensorStore {
             }
         }
 
+        if let Some(ref source) = output.replace_source_inventory {
+            self.inventory.retain(|_, node| node.source != *source);
+        }
+
         for node in output.inventory {
             if self.inventory.contains_key(&node.id)
                 || self.inventory.len() < self.config.max_inventory_nodes
@@ -203,16 +210,28 @@ impl SensorStore {
     }
 
     pub fn readings(&self, filter_ids: Option<&[String]>) -> Vec<SensorReading> {
+        let now = now_epoch_ms();
+        let format_reading = |s: &SensorSeries| -> Option<SensorReading> {
+            let mut r = s.latest.clone()?;
+            let max_age_ms = match s.descriptor.poll_tier {
+                PollTier::Fast => Some(FAST_STALE_MS),
+                PollTier::Slow => Some(SLOW_STALE_MS),
+                PollTier::Static => None,
+            };
+            if let Some(limit) = max_age_ms {
+                if now.saturating_sub(r.timestamp_ms) > limit {
+                    r.status = SensorStatus::Stale;
+                }
+            }
+            Some(r)
+        };
+
         match filter_ids {
             Some(ids) => ids
                 .iter()
-                .filter_map(|id| self.series.get(id).and_then(|s| s.latest.clone()))
+                .filter_map(|id| self.series.get(id).and_then(format_reading))
                 .collect(),
-            None => self
-                .series
-                .values()
-                .filter_map(|s| s.latest.clone())
-                .collect(),
+            None => self.series.values().filter_map(format_reading).collect(),
         }
     }
 
@@ -407,9 +426,10 @@ mod tests {
         });
         let mut out = ProbeOutput::default();
         out.descriptors.push(test_desc("test.dev.temp.a"));
+        let base_ts = now_epoch_ms();
         for (i, v) in [50.0, 60.0, 90.0, 102.0].into_iter().enumerate() {
             out.samples
-                .push(RawSample::new("test.dev.temp.a", v, (i as u64) * 1000));
+                .push(RawSample::new("test.dev.temp.a", v, base_ts + (i as u64)));
         }
         store.ingest(out);
 
@@ -479,5 +499,18 @@ mod tests {
         assert!(readings[0].value.is_finite());
         assert!(readings[0].stats.avg.is_finite());
         assert_eq!(readings[0].stats.samples, 2);
+    }
+
+    #[test]
+    fn old_fast_readings_age_to_stale() {
+        let mut store = SensorStore::new(StoreConfig::default());
+        let mut out = ProbeOutput::default();
+        out.descriptors.push(test_desc("test.dev.temp.old"));
+        out.samples.push(RawSample::new("test.dev.temp.old", 45.0, 1_000));
+        store.ingest(out);
+
+        let readings = store.readings(None);
+        assert_eq!(readings.len(), 1);
+        assert_eq!(readings[0].status, SensorStatus::Stale);
     }
 }

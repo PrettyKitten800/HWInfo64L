@@ -100,13 +100,14 @@ impl CoreEngine {
                 let start = Instant::now();
                 let poll_cell = Arc::clone(&probe_cell);
                 let poll_task = tokio::task::spawn_blocking(move || {
-                    let result = catch_unwind(AssertUnwindSafe(move || {
-                        let Ok(mut guard) = poll_cell.lock() else {
-                            return Err(ProbeError::Transient(
-                                "probe mutex poisoned".to_string(),
-                            ));
-                        };
-                        guard.poll()
+                    let result = catch_unwind(AssertUnwindSafe(move || match poll_cell.try_lock() {
+                        Ok(mut guard) => guard.poll(),
+                        Err(std::sync::TryLockError::WouldBlock) => {
+                            Err(ProbeError::Timeout(timeout))
+                        }
+                        Err(std::sync::TryLockError::Poisoned(_)) => {
+                            Err(ProbeError::Transient("probe mutex poisoned".to_string()))
+                        }
                     }));
                     match result {
                         Ok(inner) => inner,
