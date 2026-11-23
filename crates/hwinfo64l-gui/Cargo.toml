@@ -1,0 +1,23 @@
+[package]
+name = "hwinfo64l-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "hwinfo64l-gui"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap.workspace = true
+gtk4 = { version = "0.9", features = ["v4_10"] }
+hwinfo64l-core.workspace = true
+hwinfo64l-probes.workspace = true
+hwinfo64l-protocol.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

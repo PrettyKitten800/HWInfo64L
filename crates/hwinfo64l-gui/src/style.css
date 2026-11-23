@@ -1,0 +1,124 @@
+/* Compact HWiNFO64-inspired styling for GTK4 */
+
+window {
+    font-size: 12.5px;
+}
+
+headerbar {
+    min-height: 36px;
+    padding: 2px 6px;
+}
+
+.mode-badge-daemon {
+    background-color: rgba(46, 160, 67, 0.22);
+    color: #3fb950;
+    border: 1px solid rgba(63, 185, 80, 0.45);
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.mode-badge-local {
+    background-color: rgba(210, 153, 34, 0.22);
+    color: #d29922;
+    border: 1px solid rgba(210, 153, 34, 0.45);
+    border-radius: 10px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.toolbar-bar {
+    padding: 4px 8px;
+    border-bottom: 1px solid alpha(currentColor, 0.12);
+}
+
+.sensor-header-row {
+    padding: 4px 12px;
+    font-weight: 700;
+    font-size: 11.5px;
+    opacity: 0.78;
+    border-bottom: 1px solid alpha(currentColor, 0.16);
+}
+
+.sensor-group-title {
+    font-weight: 700;
+    font-size: 12.5px;
+    padding: 3px 4px;
+}
+
+.sensor-row {
+    padding: 2px 8px;
+    border-bottom: 1px solid alpha(currentColor, 0.06);
+}
+
+.sensor-row:hover {
+    background-color: alpha(currentColor, 0.06);
+}
+
+.mono {
+    font-family: monospace;
+    font-feature-settings: "tnum";
+}
+
+.status-ok {
+    color: #3fb950;
+    font-weight: 700;
+    font-size: 11px;
+}
+
+.status-warn {
+    color: #d29922;
+    font-weight: 700;
+    font-size: 11px;
+}
+
+.status-crit {
+    color: #f85149;
+    font-weight: 700;
+    font-size: 11px;
+}
+
+.status-muted {
+    opacity: 0.6;
+    font-size: 11px;
+}
+
+.summary-card {
+    background-color: alpha(currentColor, 0.04);
+    border: 1px solid alpha(currentColor, 0.12);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.card-title {
+    font-weight: 700;
+    font-size: 13.5px;
+    margin-bottom: 6px;
+}
+
+.prop-key {
+    opacity: 0.72;
+    font-weight: 600;
+}
+
+.logging-active {
+    background-color: rgba(248, 81, 73, 0.22);
+    color: #f85149;
+    border: 1px solid rgba(248, 81, 73, 0.5);
+}
+
+.graph-btn {
+    min-height: 20px;
+    min-width: 24px;
+    padding: 1px 6px;
+    font-size: 11px;
+}
+
+.status-bar {
+    padding: 3px 10px;
+    font-size: 11.5px;
+    opacity: 0.82;
+    border-top: 1px solid alpha(currentColor, 0.12);
+}

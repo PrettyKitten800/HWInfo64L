@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=HWInfo64L
+Comment=HWiNFO64-style hardware inventory and real-time sensor monitor for Linux
+Exec=/usr/local/bin/hwinfo64l-gui
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Monitor;HardwareSettings;
+Keywords=hardware;sensors;temperature;cpu;gpu;ram;smart;hwinfo;

@@ -26,7 +26,33 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PROTOCOL.md](docs/PRO
 - `crates/hwinfo64l-probes` — Native Linux collectors (`hwmon`, `cpufreq`, `cpu_stat`, `rapl`, `msr`, `memory`, `zswap`, `dmi`, `pci`, `gpu`, `smart`, `net`)
 - `crates/hwinfo64ld` — Hardened read-only systemd collector daemon
 - `crates/hwinfo64l-cli` — Terminal summary, live watch, JSON dump, and CSV logger
-- `crates/hwinfo64l-gui` — Native GTK4 desktop UI *(Phase 2)*
+- `crates/hwinfo64l-gui` — Native GTK4 desktop UI (Summary, Hardware Tree, Live Sensors + Sparklines, Pop-out Graphs, CSV Logging, Probes & Plugins)
+
+## Quick Start
+
+```bash
+# Build all binaries (daemon, CLI, GTK4 GUI)
+cargo build --release --workspace
+
+# Run CLI right away (connects to hwinfo64ld if running, otherwise local mode)
+./target/release/hwinfo64l summary
+./target/release/hwinfo64l watch
+
+# Run the native GTK4 GUI
+./target/release/hwinfo64l-gui
+```
+
+### Optional: Install `hwinfo64ld` Systemd Daemon (for full SMART / RAPL / SMBIOS telemetry)
+
+```bash
+sudo install -m 755 target/release/hwinfo64ld /usr/local/bin/
+sudo install -m 755 target/release/hwinfo64l /usr/local/bin/
+sudo install -m 755 target/release/hwinfo64l-gui /usr/local/bin/
+sudo install -m 644 packaging/systemd/hwinfo64ld.service /etc/systemd/system/
+sudo install -m 644 packaging/desktop/hwinfo64l.desktop /usr/local/share/applications/
+sudo systemctl daemon-reload
+sudo systemctl enable --now hwinfo64ld.service
+```
 
 ## License
 

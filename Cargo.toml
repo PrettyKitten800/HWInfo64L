@@ -6,6 +6,7 @@ members = [
     "crates/hwinfo64l-probes",
     "crates/hwinfo64ld",
     "crates/hwinfo64l-cli",
+    "crates/hwinfo64l-gui",
 ]
 
 [workspace.package]
